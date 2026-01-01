@@ -167,7 +167,7 @@ async def run_score(
 ):
     """Trigger scoring workflow for a business"""
     try:
-        # Get the canonical record ID for this business
+        # Check if canonical record exists
         session = get_session_sync()
         try:
             from models import CanonicalBusinessRecord
@@ -181,46 +181,28 @@ async def run_score(
                     detail="No canonical record found. Run canonicalization first."
                 )
 
-            # Create initial state for scoring
-            initial_state: CategorizationState = {
-                "business_id": str(canonical_record.business_id),
-                "canonical_record_id": str(canonical_record.id),
-                "scoring_run_id": f"score-{uuid.uuid4()}",
-                "scoring_output": None,
-                # Fill in other required fields with defaults
-                "raw_listing_id": "",
-                "raw_text": "",
-                "raw_html": "",
-                "listing_metadata": {},
-                "agent_run_id": "",
-                "canonical_record": None,
-                "follow_up_questions": None
-            }
-
-            # Run the scoring workflow
-            graph = create_categorization_graph()
-            # Set the API key in environment for the workflow
-            os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-            # Start from the scoring node
-            result = graph.invoke(initial_state, {"recursion_limit": 50})
-
-            # Check if scoring was successful
-            if result.get("scoring_output", {}).get("error"):
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Scoring failed: {result['scoring_output']['error']}"
-                )
-
-            run_id = result.get("scoring_run_id", f"score-{uuid.uuid4()}")
-            return RunResponse(
-                success=True,
-                message="Scoring completed successfully",
-                business_id=request.business_id,
-                run_id=run_id
-            )
-
         finally:
             session.close()
+
+        # Set the API key in environment for the workflow
+        os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+
+        # Run standalone scoring function
+        result = run_standalone_scoring(request.business_id)
+
+        # Check if scoring was successful
+        if result.get("error"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Scoring failed: {result['error']}"
+            )
+
+        return RunResponse(
+            success=True,
+            message="Scoring completed successfully",
+            business_id=request.business_id,
+            run_id=result["scoring_run_id"]
+        )
 
     except HTTPException:
         raise
@@ -234,7 +216,7 @@ async def run_follow_ups(
 ):
     """Trigger follow-up question generation for a business"""
     try:
-        # Get the scoring record for this business
+        # Check if scoring record exists and business is eligible
         session = get_session_sync()
         try:
             from models import ScoringRecord
@@ -255,51 +237,34 @@ async def run_follow_ups(
                     detail=f"Business does not qualify for follow-up questions (tier: {scoring_record.tier}, score: {scoring_record.total_score}). Must be tier A/B with score >= 70."
                 )
 
-            # Get canonical record ID
-            canonical_record_id = scoring_record.canonical_record_id
-
-            # Create initial state for follow-up generation
-            initial_state: CategorizationState = {
-                "business_id": str(scoring_record.business_id),
-                "canonical_record_id": str(canonical_record_id),
-                "scoring_run_id": str(scoring_record.scoring_run_id),
-                "scoring_output": {
-                    "tier": scoring_record.tier,
-                    "total_score": float(scoring_record.total_score),
-                },
-                # Fill in other required fields with defaults
-                "raw_listing_id": "",
-                "raw_text": "",
-                "raw_html": "",
-                "listing_metadata": {},
-                "agent_run_id": "",
-                "canonical_record": None,
-                "follow_up_questions": None
-            }
-
-            # Run the follow-up generation workflow
-            graph = create_categorization_graph()
-            # Set the API key in environment for the workflow
-            os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
-            result = graph.invoke(initial_state, {"recursion_limit": 50})
-
-            # Check if follow-up generation was successful
-            if result.get("follow_up_questions", {}).get("error"):
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Follow-up generation failed: {result['follow_up_questions']['error']}"
-                )
-
-            run_id = f"followups-{uuid.uuid4()}"
-            return RunResponse(
-                success=True,
-                message="Follow-up questions generated successfully",
-                business_id=request.business_id,
-                run_id=run_id
-            )
-
         finally:
             session.close()
+
+        # Set the API key in environment for the workflow
+        os.environ["OPENAI_API_KEY"] = os.getenv("OPENAI_API_KEY")
+
+        # Run standalone follow-up generation function
+        result = run_standalone_followup_generation(request.business_id)
+
+        # Check if follow-up generation was successful
+        if result.get("error"):
+            if result["error"] == "business_not_eligible_for_followups":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Business does not qualify for follow-up questions (tier: {result.get('tier', 'unknown')}, score: {result.get('score', 'unknown')}). Must be tier A/B with score >= 70."
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Follow-up generation failed: {result['error']}"
+                )
+
+        return RunResponse(
+            success=True,
+            message="Follow-up questions generated successfully",
+            business_id=request.business_id,
+            run_id=result["followup_run_id"]
+        )
 
     except HTTPException:
         raise

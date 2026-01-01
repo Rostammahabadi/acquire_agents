@@ -74,6 +74,95 @@ export default function BusinessDetailPage() {
     }
   };
 
+  const triggerAllOperations = async () => {
+    const actionName = "Run All";
+    setTriggerLoading(actionName);
+
+    try {
+      // Trigger all three operations in parallel
+      const [canonicalizeResponse, scoreResponse, followUpResponse] =
+        await Promise.allSettled([
+          fetch("/api/run/canonicalize", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ business_id: businessId }),
+          }),
+          fetch("/api/run/score", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ business_id: businessId }),
+          }),
+          fetch("/api/run/follow-ups", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ business_id: businessId }),
+          }),
+        ]);
+
+      const results = [];
+
+      // Check canonicalization result
+      if (canonicalizeResponse.status === "fulfilled") {
+        const canonicalizeResult = await canonicalizeResponse.value.json();
+        if (canonicalizeResult.success) {
+          results.push(`Canonicalization: Run ID ${canonicalizeResult.run_id}`);
+        } else {
+          results.push(
+            `Canonicalization failed: ${canonicalizeResult.message}`
+          );
+        }
+      } else {
+        results.push(`Canonicalization error: ${canonicalizeResponse.reason}`);
+      }
+
+      // Check scoring result
+      if (scoreResponse.status === "fulfilled") {
+        const scoreResult = await scoreResponse.value.json();
+        if (scoreResult.success) {
+          results.push(`Scoring: Run ID ${scoreResult.run_id}`);
+        } else {
+          results.push(`Scoring failed: ${scoreResult.message}`);
+        }
+      } else {
+        results.push(`Scoring error: ${scoreResponse.reason}`);
+      }
+
+      // Check follow-up result
+      if (followUpResponse.status === "fulfilled") {
+        const followUpResult = await followUpResponse.value.json();
+        if (followUpResult.success) {
+          results.push(`Follow-ups: Run ID ${followUpResult.run_id}`);
+        } else {
+          results.push(`Follow-ups failed: ${followUpResult.message}`);
+        }
+      } else {
+        results.push(`Follow-ups error: ${followUpResponse.reason}`);
+      }
+
+      // Show results
+      alert(`Operations completed:\n${results.join("\n")}`);
+
+      // Refresh the data after a short delay
+      setTimeout(() => {
+        fetchBusinessDetail();
+      }, 3000);
+    } catch (err) {
+      alert(
+        `Error triggering all operations: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`
+      );
+    } finally {
+      setTriggerLoading(null);
+    }
+  };
+
   const triggerScoringAndFollowUps = async () => {
     const actionName = "Scoring & Follow-ups";
     setTriggerLoading(actionName);
@@ -289,17 +378,26 @@ export default function BusinessDetailPage() {
           <div className="px-6 py-4 border-b border-gray-200">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-medium text-gray-900">Raw Listing</h3>
-              <button
-                onClick={() =>
-                  triggerAgentRun("canonicalize", "Canonicalization")
-                }
-                disabled={triggerLoading === "Canonicalization"}
-                className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {triggerLoading === "Canonicalization"
-                  ? "Running..."
-                  : "Re-run Canonicalization"}
-              </button>
+              <div className="flex space-x-3">
+                <button
+                  onClick={() =>
+                    triggerAgentRun("canonicalize", "Canonicalization")
+                  }
+                  disabled={triggerLoading === "Canonicalization"}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {triggerLoading === "Canonicalization"
+                    ? "Running..."
+                    : "Re-run Canonicalization"}
+                </button>
+                <button
+                  onClick={triggerAllOperations}
+                  disabled={triggerLoading === "Run All"}
+                  className="px-4 py-2 bg-purple-600 text-white text-sm rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {triggerLoading === "Run All" ? "Running All..." : "Run All"}
+                </button>
+              </div>
             </div>
           </div>
           <div className="p-6">

@@ -8,14 +8,21 @@ export default function BusinessesPage() {
   const [businesses, setBusinesses] = useState<BusinessListing[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [runAllLoading, setRunAllLoading] = useState(false);
+  const [scrapingLoading, setScrapingLoading] = useState(false);
+  const [tierFilter, setTierFilter] = useState<string>("all");
 
   useEffect(() => {
     fetchBusinesses();
-  }, []);
+  }, [tierFilter]);
 
   const fetchBusinesses = async () => {
     try {
-      const response = await fetch("/api/businesses");
+      const url =
+        tierFilter === "all"
+          ? "/api/businesses"
+          : `/api/businesses?tier=${tierFilter}`;
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error("Failed to fetch businesses");
       }
@@ -25,6 +32,149 @@ export default function BusinessesPage() {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const scrapeListings = async () => {
+    setScrapingLoading(true);
+
+    try {
+      const response = await fetch("/api/scrape", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to scrape listings");
+      }
+
+      const result = await response.json();
+
+      // Show results
+      const summary = `Scraping completed!\n\n${result.message}\n\nStats:\n- URLs found: ${result.stats.total_urls_found}\n- Already exist: ${result.stats.already_exist}\n- Newly scraped: ${result.stats.scraped}\n- Failed: ${result.stats.failed}\n- Inserted: ${result.stats.inserted}`;
+      alert(summary);
+
+      // Refresh the business list
+      await fetchBusinesses();
+    } catch (err) {
+      alert(
+        `Error scraping listings: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`
+      );
+    } finally {
+      setScrapingLoading(false);
+    }
+  };
+
+  const runAllOperations = async () => {
+    if (businesses.length === 0) {
+      alert("No businesses found to process.");
+      return;
+    }
+
+    setRunAllLoading(true);
+
+    try {
+      const results = [];
+      let successCount = 0;
+      let errorCount = 0;
+
+      // Process each business sequentially to avoid overwhelming the backend
+      for (const business of businesses) {
+        const businessId = business.business_id;
+        const operations = [];
+
+        try {
+          // Check which operations are needed based on pipeline status
+          const operations: string[] = [];
+          if (!business.pipeline_status.canonicalized) {
+            operations.push("canonicalize");
+          }
+          if (!business.pipeline_status.scored) {
+            operations.push("score");
+          }
+          if (
+            !business.pipeline_status.follow_up_generated &&
+            business.pipeline_status.scored &&
+            (business.latest_tier === "A" || business.latest_tier === "B")
+          ) {
+            operations.push("follow-ups");
+          }
+
+          if (operations.length === 0) {
+            results.push(`${businessId.slice(0, 8)}...: Already processed`);
+            successCount++;
+            continue;
+          }
+
+          // Run operations in parallel for this business
+          const operationPromises = operations.map(async (operation) => {
+            const response = await fetch(`/api/run/${operation}`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ business_id: businessId }),
+            });
+
+            if (!response.ok) {
+              throw new Error(`${operation} failed`);
+            }
+
+            const result = await response.json();
+            return { operation, result };
+          });
+
+          const operationResults = await Promise.allSettled(operationPromises);
+
+          const businessResults = operationResults.map((result, index) => {
+            const operation = operations[index];
+            if (result.status === "fulfilled") {
+              return `${operation}: ✓ (Run ID: ${result.value.result.run_id})`;
+            } else {
+              errorCount++;
+              return `${operation}: ✗ (${result.reason.message})`;
+            }
+          });
+
+          results.push(
+            `${businessId.slice(0, 8)}...: ${businessResults.join(", ")}`
+          );
+          if (operationResults.every((r) => r.status === "fulfilled")) {
+            successCount++;
+          } else {
+            errorCount++;
+          }
+        } catch (err) {
+          results.push(
+            `${businessId.slice(0, 8)}...: ✗ Error: ${
+              err instanceof Error ? err.message : "Unknown error"
+            }`
+          );
+          errorCount++;
+        }
+      }
+
+      // Show summary
+      const summary = `Processing complete!\n\nSuccessful: ${successCount}\nErrors: ${errorCount}\n\nDetails:\n${results.join(
+        "\n"
+      )}`;
+      alert(summary);
+
+      // Refresh the business list
+      await fetchBusinesses();
+    } catch (err) {
+      alert(
+        `Error running operations: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`
+      );
+    } finally {
+      setRunAllLoading(false);
     }
   };
 
@@ -85,10 +235,61 @@ export default function BusinessesPage() {
   return (
     <div>
       <div className="mb-8">
-        <h2 className="text-3xl font-bold text-gray-900">Business Pipeline</h2>
-        <p className="mt-2 text-gray-600">
-          View and manage businesses in the acquisition pipeline.
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-3xl font-bold text-gray-900">
+              Business Pipeline
+            </h2>
+            <p className="mt-2 text-gray-600">
+              View and manage businesses in the acquisition pipeline.
+            </p>
+          </div>
+          <div className="flex space-x-4">
+            <button
+              onClick={scrapeListings}
+              disabled={scrapingLoading}
+              className="px-6 py-3 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {scrapingLoading ? "Scraping..." : "Scrape New Listings"}
+            </button>
+            <button
+              onClick={runAllOperations}
+              disabled={runAllLoading}
+              className="px-6 py-3 bg-purple-600 text-white text-sm font-medium rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {runAllLoading ? "Processing All..." : "Run All Operations"}
+            </button>
+          </div>
+        </div>
+
+        {/* Tier Filter Controls */}
+        <div className="mt-6">
+          <div className="flex items-center space-x-4">
+            <label
+              htmlFor="tier-filter"
+              className="text-sm font-medium text-gray-700"
+            >
+              Filter by Tier:
+            </label>
+            <select
+              id="tier-filter"
+              value={tierFilter}
+              onChange={(e) => setTierFilter(e.target.value)}
+              className="block w-32 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+            >
+              <option value="all">All Tiers</option>
+              <option value="A">Tier A</option>
+              <option value="B">Tier B</option>
+              <option value="C">Tier C</option>
+              <option value="D">Tier D</option>
+            </select>
+            {tierFilter !== "all" && (
+              <span className="text-sm text-gray-500">
+                Showing {businesses.length} {tierFilter} tier businesses
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="bg-white shadow overflow-hidden sm:rounded-md">

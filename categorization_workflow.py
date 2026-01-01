@@ -1067,6 +1067,239 @@ def create_categorization_graph() -> StateGraph:
 
 
 # =============================================================================
+# STANDALONE FUNCTIONS FOR API ENDPOINTS
+# =============================================================================
+
+def run_standalone_scoring(business_id: str) -> dict:
+    """
+    Run scoring for a business that already has a canonical record.
+    This function can be called directly from API endpoints without running the full graph.
+    """
+    # Get database session
+    session = get_session_sync()
+    try:
+        from models import CanonicalBusinessRecord
+        # Get the latest canonical record for this business
+        canonical_record = session.query(CanonicalBusinessRecord).filter(
+            CanonicalBusinessRecord.business_id == business_id
+        ).order_by(CanonicalBusinessRecord.created_at.desc()).first()
+
+        if not canonical_record:
+            return {"error": "no_canonical_record_found"}
+
+        # Prepare canonical data for LLM
+        canonical_data = {
+            "financials": canonical_record.financials,
+            "product": canonical_record.product,
+            "customers": canonical_record.customers,
+            "operations": canonical_record.operations,
+            "technology": canonical_record.technology,
+            "growth": canonical_record.growth,
+            "risks": canonical_record.risks,
+            "seller": canonical_record.seller,
+            "confidence_flags": canonical_record.confidence_flags,
+        }
+
+        # Initialize LLM for scoring
+        from langchain_openai import ChatOpenAI
+        llm = ChatOpenAI(model="gpt-5-mini", temperature=0)
+
+        # Create scoring chain
+        prompt = create_scoring_prompt()
+        parser = JsonOutputParser(pydantic_object=ScoringOutput)
+        chain = prompt | llm | parser
+
+        # Get scoring output from LLM
+        raw_result = chain.invoke({
+            "canonical_data": json.dumps(canonical_data),
+            "schema": json.dumps(ScoringOutput.model_json_schema())
+        })
+
+        print(f"DEBUG: Raw LLM result: {raw_result}")
+
+        # Validate with Pydantic model
+        try:
+            scoring_output = ScoringOutput(**raw_result)
+        except Exception as validation_error:
+            print(f"DEBUG: Validation error: {validation_error}")
+            print(f"DEBUG: Raw result type: {type(raw_result)}")
+            raise validation_error
+
+        # Apply data quality penalties
+        confidence_flags = None
+        if canonical_record.confidence_flags:
+            confidence_flags = ConfidenceFlagsDomain(**canonical_record.confidence_flags)
+
+        penalized_scores = apply_data_quality_penalties(
+            scoring_output.component_scores,
+            confidence_flags
+        )
+
+        # Update scoring output with penalized scores
+        scoring_output.component_scores = penalized_scores
+
+        # Validate final output
+        if not validate_scoring_output(scoring_output):
+            return {
+                "error": "validation_failed",
+                "details": "Scoring output failed validation"
+            }
+
+        # Calculate deterministic total score and tier
+        total_score = calculate_total_score(scoring_output.component_scores)
+        tier = determine_tier(total_score)
+
+        # Insert scoring record
+        scoring_run_id = f"score-{uuid4()}"
+        record_id = insert_scoring_record(
+            business_id=business_id,
+            canonical_record_id=str(canonical_record.id),
+            scoring_run_id=scoring_run_id,
+            scoring_output=scoring_output,
+            session=session
+        )
+
+        return {
+            "success": True,
+            "record_id": record_id,
+            "scoring_run_id": scoring_run_id,
+            "component_scores": scoring_output.component_scores.dict(),
+            "top_buy_reasons": scoring_output.top_buy_reasons,
+            "top_risks": scoring_output.top_risks,
+            "total_score": total_score,
+            "tier": tier
+        }
+
+    except Exception as e:
+        return {
+            "error": "scoring_failed",
+            "details": str(e)
+        }
+    finally:
+        session.close()
+
+
+def run_standalone_followup_generation(business_id: str) -> dict:
+    """
+    Generate follow-up questions for a business that has been scored.
+    This function can be called directly from API endpoints.
+    """
+    # Get database session
+    session = get_session_sync()
+    try:
+        from models import ScoringRecord, CanonicalBusinessRecord
+        # Get the latest scoring record for this business
+        scoring_record = session.query(ScoringRecord).filter(
+            ScoringRecord.business_id == business_id
+        ).order_by(ScoringRecord.scoring_timestamp.desc()).first()
+
+        if not scoring_record:
+            return {"error": "no_scoring_record_found"}
+
+        # Check gating criteria (tier A/B, score >= 70)
+        scoring_output = {
+            "tier": scoring_record.tier,
+            "total_score": scoring_record.total_score
+        }
+        if not should_generate_follow_up_questions(scoring_output):
+            return {
+                "error": "business_not_eligible_for_followups",
+                "tier": scoring_record.tier,
+                "score": scoring_record.total_score
+            }
+
+        # Get canonical record
+        canonical_record = session.query(CanonicalBusinessRecord).filter(
+            CanonicalBusinessRecord.id == scoring_record.canonical_record_id
+        ).first()
+
+        if not canonical_record:
+            return {"error": "canonical_record_not_found"}
+
+        # Prepare canonical data for analysis
+        canonical_data = {
+            "financials": canonical_record.financials,
+            "product": canonical_record.product,
+            "customers": canonical_record.customers,
+            "operations": canonical_record.operations,
+            "technology": canonical_record.technology,
+            "growth": canonical_record.growth,
+            "risks": canonical_record.risks,
+            "seller": canonical_record.seller,
+            "confidence_flags": canonical_record.confidence_flags,
+        }
+
+        # Analyze uncertainties
+        confidence_flags = None
+        if canonical_record.confidence_flags:
+            confidence_flags = ConfidenceFlagsDomain(**canonical_record.confidence_flags)
+
+        uncertainties = analyze_uncertainty_sources(canonical_data, confidence_flags)
+
+        # If no significant uncertainties, skip
+        if not uncertainties:
+            return {
+                "success": True,
+                "followup_run_id": f"followup-{uuid4()}",
+                "questions": [],
+                "message": "No significant uncertainties found"
+            }
+
+        # Generate questions using LLM
+        from langchain_openai import ChatOpenAI
+        llm = ChatOpenAI(model="gpt-5-mini", temperature=0)
+
+        prompt = create_followup_prompt()
+        parser = JsonOutputParser(pydantic_object=FollowUpQuestionsOutput)
+        chain = prompt | llm | parser
+
+        uncertainties_json = json.dumps(uncertainties)
+        canonical_data_json = json.dumps(canonical_data)
+
+        raw_result = chain.invoke({
+            "uncertainties": uncertainties_json,
+            "canonical_data": canonical_data_json,
+            "schema": json.dumps(FollowUpQuestionsOutput.model_json_schema())
+        })
+
+        # Validate with Pydantic model
+        followup_output = FollowUpQuestionsOutput(**raw_result)
+
+        # Insert questions into database
+        question_ids = insert_follow_up_questions(
+            business_id=business_id,
+            canonical_record_id=str(canonical_record.id),
+            questions=followup_output.questions,
+            session=session
+        )
+
+        # Prepare response data
+        questions_data = []
+        for i, question in enumerate(followup_output.questions):
+            questions_data.append({
+                "id": question_ids[i],
+                "question_text": question.question_text,
+                "triggered_by_field": question.triggered_by_field,
+                "severity": question.severity
+            })
+
+        return {
+            "success": True,
+            "followup_run_id": f"followup-{uuid4()}",
+            "questions": questions_data,
+            "count": len(questions_data)
+        }
+
+    except Exception as e:
+        return {
+            "error": "followup_generation_failed",
+            "details": str(e)
+        }
+    finally:
+        session.close()
+
+
+# =============================================================================
 # USAGE EXAMPLE
 # =============================================================================
 

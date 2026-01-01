@@ -24,5 +24,10 @@
     "eslint-config-next": "16.1.1",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "imports": {
+    "#fs": "fs",
+    "#path": "path",
+    "#child_process": "child_process"
   }
 }

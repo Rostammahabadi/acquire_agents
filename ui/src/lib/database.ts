@@ -81,18 +81,38 @@ export interface FollowUpQuestionRow {
   created_at: string;
 }
 
-export async function getBusinesses() {
+export async function getBusinesses(tierFilter?: string) {
   const client = await pool.connect();
   try {
-    // Get all unique business IDs from raw listings, ordered by latest scrape
-    const businessIdsQuery = `
-      SELECT business_id::text as business_id, MAX(scrape_timestamp) as latest_scrape
-      FROM raw_listings
-      GROUP BY business_id
+    // Get all unique business IDs from raw listings, optionally filtered by tier
+    let businessIdsQuery = `
+      SELECT rl.business_id::text as business_id, MAX(rl.scrape_timestamp) as latest_scrape
+      FROM raw_listings rl
+    `;
+
+    const queryParams: any[] = [];
+    let paramIndex = 1;
+
+    if (tierFilter && tierFilter !== "all") {
+      businessIdsQuery += `
+        INNER JOIN scoring_records sr ON rl.business_id::text = sr.business_id::text
+        WHERE sr.tier = $${paramIndex}
+        AND sr.scoring_timestamp = (
+          SELECT MAX(scoring_timestamp)
+          FROM scoring_records
+          WHERE business_id = sr.business_id
+        )
+      `;
+      queryParams.push(tierFilter);
+      paramIndex++;
+    }
+
+    businessIdsQuery += `
+      GROUP BY rl.business_id
       ORDER BY latest_scrape DESC
     `;
 
-    const businessIdsResult = await client.query(businessIdsQuery);
+    const businessIdsResult = await client.query(businessIdsQuery, queryParams);
     const businesses = [];
 
     // For each business, get the latest data
