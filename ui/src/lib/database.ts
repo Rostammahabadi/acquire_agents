@@ -252,6 +252,18 @@ export async function getBusinessDetail(businessId: string) {
     const followupResult = await client.query(followupQuery, [businessId]);
     const followUpQuestions = followupResult.rows;
 
+    // Get deep research results (synthesis)
+    const deepResearchQuery = `
+      SELECT agent_output FROM sector_research_records
+      WHERE business_id::text = $1 AND agent_type = 'synthesis'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    const deepResearchResult = await client.query(deepResearchQuery, [
+      businessId,
+    ]);
+    const deepResearchResults = deepResearchResult.rows[0]?.agent_output;
+
     return {
       business_id: businessId,
       raw_listing: {
@@ -316,6 +328,7 @@ export async function getBusinessDetail(businessId: string) {
         response_status: q.response_status,
         created_at: q.created_at.toISOString(),
       })),
+      deep_research_results: deepResearchResults,
     };
   } finally {
     client.release();

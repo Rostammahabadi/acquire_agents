@@ -146,4 +146,20 @@ export interface BusinessDetail {
   canonical_record?: CanonicalRecord;
   scoring_record?: ScoringRecord;
   follow_up_questions: FollowUpQuestion[];
+  deep_research_results?: DeepResearchResults;
+}
+
+export interface SWOTAnalysis {
+  strengths: string[];
+  weaknesses: string[];
+  opportunities: string[];
+  threats: string[];
+}
+
+export interface DeepResearchResults {
+  swot: SWOTAnalysis;
+  non_obvious_risks: string[];
+  time_sensitive_opportunities: string[];
+  sector_fit_verdict: "High" | "Medium" | "Low";
+  justification: string;
 }

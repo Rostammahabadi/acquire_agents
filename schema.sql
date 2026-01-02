@@ -241,3 +241,107 @@ ALTER TABLE scoring_records ADD CONSTRAINT check_scoring_timestamp_not_future
 -- Ensure response timestamps are after question creation
 ALTER TABLE follow_up_questions ADD CONSTRAINT check_response_after_question
     CHECK (response_timestamp IS NULL OR response_timestamp >= created_at);
+
+-- =============================================================================
+-- 6. SECTOR DEEP RESEARCH AGENT OUTPUTS
+-- Stores structured outputs from deep research agents (market, platform, etc.)
+-- Append-only, versioned, reusable across businesses
+-- =============================================================================
+
+CREATE TABLE sector_research_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    -- Scope & linkage
+    business_id UUID,
+    -- Nullable on purpose: allows sector-only research not tied to a specific listing
+
+    sector_key TEXT NOT NULL,
+    -- Canonical sector identifier, e.g.:
+    -- 'ad_monetized_mobile_word_games'
+    -- 'enterprise_crypto_analytics_saas'
+
+    agent_type TEXT NOT NULL
+        CHECK (agent_type IN (
+            'market_structure',
+            'platform_risk',
+            'monetization',
+            'competition',
+            'buyer_exit',
+            'synthesis'
+        )),
+
+    research_run_id TEXT NOT NULL,
+    -- Stable ID for one orchestrated deep-research run
+
+    version INTEGER NOT NULL DEFAULT 1,
+    -- Increment when you intentionally re-run research for same sector + agent
+
+    content_hash TEXT NOT NULL,
+    -- SHA-256 hash of (sector_key + agent_type + prompt_version)
+    -- Used to prevent duplicate inserts
+
+    -- Core payload
+    agent_output JSONB NOT NULL,
+    -- Must match the strict JSON schema enforced by that agent
+
+    -- Metadata & traceability
+    model_name TEXT NOT NULL, -- e.g. 'o4-mini-deep-research'
+    prompt_version TEXT NOT NULL,
+    -- Allows you to invalidate old research if prompts change
+
+    sources JSONB,
+    -- Optional explicit extraction for source URLs if present
+
+    confidence_level TEXT
+        CHECK (confidence_level IN ('high', 'medium', 'low')),
+    -- Optional synthesis or agent-provided confidence
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- =============================================================================
+-- INDEXES
+-- =============================================================================
+
+-- Primary lookup: all research for a business
+CREATE INDEX ix_sector_research_business_id
+    ON sector_research_records(business_id);
+
+-- Sector-level reuse
+CREATE INDEX ix_sector_research_sector_key
+    ON sector_research_records(sector_key);
+
+-- Agent-specific queries
+CREATE INDEX ix_sector_research_agent_type
+    ON sector_research_records(agent_type);
+
+-- Versioned lookup
+CREATE INDEX ix_sector_research_sector_agent_version
+    ON sector_research_records(sector_key, agent_type, version DESC);
+
+-- Fast deduplication / cache checks
+CREATE UNIQUE INDEX ux_sector_research_dedup
+    ON sector_research_records(sector_key, agent_type, content_hash);
+
+-- Time-based analysis
+CREATE INDEX ix_sector_research_created_at
+    ON sector_research_records(created_at DESC);
+
+-- =============================================================================
+-- COMMENTS
+-- =============================================================================
+
+COMMENT ON TABLE sector_research_records IS
+'Append-only storage of deep research agent outputs by sector and agent type';
+
+COMMENT ON COLUMN sector_research_records.sector_key IS
+'Canonical identifier for the sector being researched';
+
+COMMENT ON COLUMN sector_research_records.agent_type IS
+'Type of deep research agent that produced this output';
+
+COMMENT ON COLUMN sector_research_records.agent_output IS
+'Structured JSON output produced by the deep research agent';
+
+COMMENT ON COLUMN sector_research_records.content_hash IS
+'Deduplication hash to prevent storing identical research outputs';

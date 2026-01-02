@@ -231,7 +231,7 @@ class AgentExecutionLog(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     agent_name: str = Field(index=True, description="Name of agent: 'categorization', 'scoring', etc.")
-    business_id: str = Field(index=True, description="References business_id in raw_listings")
+    business_id: Optional[str] = Field(default=None, index=True, description="References business_id in raw_listings (null for sector-level research)")
 
     execution_id: str = Field(description="Unique ID for this agent execution")
     input_snapshot: Optional[dict] = Field(

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from database import get_session_sync
 from models import CanonicalBusinessRecord
+from utils import log_agent_execution
 
 
 # =============================================================================
@@ -701,9 +702,19 @@ def categorize_listing(state: CategorizationState) -> CategorizationState:
     - Implements append-only versioning based on content hash
     - Never scores or evaluates the business
     """
-    # Initialize LLM (assuming OpenAI GPT-4 for structured output)
-    from langchain_openai import ChatOpenAI
-    llm = ChatOpenAI(model="gpt-5-mini", temperature=0)
+    with log_agent_execution(
+        agent_name="categorization",
+        business_id=state["business_id"],
+        input_snapshot={
+            "raw_listing_id": state["raw_listing_id"],
+            "agent_run_id": state["agent_run_id"],
+            "raw_text_length": len(state["raw_text"]),
+            "raw_html_length": len(state["raw_html"])
+        }
+    ) as logger:
+        # Initialize LLM (assuming OpenAI GPT-4 for structured output)
+        from langchain_openai import ChatOpenAI
+        llm = ChatOpenAI(model="gpt-5-mini", temperature=0)
 
     # Create extraction chain
     prompt = create_extraction_prompt()
@@ -741,6 +752,13 @@ def categorize_listing(state: CategorizationState) -> CategorizationState:
             )
 
             # Return updated state with canonical record
+            logger.log_success({
+                "model_name": "gpt-5-mini",
+                "record_id": record_id,
+                "content_hash": content_hash,
+                "canonical_domains_extracted": len([k for k, v in canonical_data.dict().items() if v is not None])
+            })
+
             return {
                 **state,
                 "canonical_record": {
@@ -751,26 +769,47 @@ def categorize_listing(state: CategorizationState) -> CategorizationState:
                 }
             }
 
+        except ValidationError as e:
+            logger.log_failure(f"Schema validation failed: {str(e)}", {
+                "validation_error": str(e),
+                "raw_text_length": len(state["raw_text"])
+            })
+
+            # Log validation error and return state with error
+            return {
+                **state,
+                "canonical_record": {
+                    "error": "schema_validation_failed",
+                    "details": str(e)
+                }
+            }
+        except Exception as e:
+            # Log general error and return state
+            logger.log_failure(f"Categorization failed: {str(e)}", {
+                "error_type": type(e).__name__,
+                "raw_text_length": len(state["raw_text"])
+            })
+
+            return {
+                **state,
+                "canonical_record": {
+                    "error": "extraction_failed",
+                    "details": str(e)
+                }
+            }
         finally:
             session.close()
 
-    except ValidationError as e:
-        # Log validation error and return state with error
-        print(f"Schema validation failed: {e}")
-        return {
-            **state,
-            "canonical_record": {
-                "error": "schema_validation_failed",
-                "details": str(e)
-            }
-        }
     except Exception as e:
-        # Log general error and return state
-        print(f"Categorization failed: {e}")
+        # Handle any exceptions from the outer try block
+        logger.log_failure(f"Unexpected error in categorization: {str(e)}", {
+            "error_type": type(e).__name__,
+            "business_id": state.get("business_id")
+        })
         return {
             **state,
             "canonical_record": {
-                "error": "extraction_failed",
+                "error": "unexpected_error",
                 "details": str(e)
             }
         }
@@ -790,15 +829,26 @@ def score_business(state: CategorizationState) -> CategorizationState:
     - Applies deterministic total score calculation and tier mapping
     - Inserts immutable scoring record to database
     """
-    if not state.get("canonical_record_id"):
-        return {
-            **state,
-            "scoring_output": {
-                "error": "no_canonical_record_id"
-            }
+    with log_agent_execution(
+        agent_name="scoring",
+        business_id=state["business_id"],
+        input_snapshot={
+            "canonical_record_id": state.get("canonical_record_id"),
+            "agent_run_id": state.get("agent_run_id")
         }
+    ) as logger:
+        if not state.get("canonical_record_id"):
+            logger.log_failure("No canonical_record_id provided", {
+                "missing_field": "canonical_record_id"
+            })
+            return {
+                **state,
+                "scoring_output": {
+                    "error": "no_canonical_record_id"
+                }
+            }
 
-    # Load canonical record from database
+        # Load canonical record from database
     session = get_session_sync()
     try:
         from models import CanonicalBusinessRecord
@@ -890,6 +940,14 @@ def score_business(state: CategorizationState) -> CategorizationState:
         )
 
         # Return updated state with scoring results
+        logger.log_success({
+            "model_name": "gpt-5-mini",
+            "total_score": total_score,
+            "tier": tier,
+            "record_id": record_id,
+            "scoring_run_id": scoring_run_id
+        })
+
         return {
             **state,
             "scoring_run_id": scoring_run_id,
@@ -904,6 +962,11 @@ def score_business(state: CategorizationState) -> CategorizationState:
         }
 
     except ValidationError as e:
+        logger.log_failure(f"Schema validation failed: {str(e)}", {
+            "validation_error": str(e),
+            "canonical_record_id": state.get("canonical_record_id")
+        })
+
         return {
             **state,
             "scoring_output": {
@@ -912,6 +975,11 @@ def score_business(state: CategorizationState) -> CategorizationState:
             }
         }
     except Exception as e:
+        logger.log_failure(f"Scoring failed: {str(e)}", {
+            "error_type": type(e).__name__,
+            "canonical_record_id": state.get("canonical_record_id")
+        })
+
         return {
             **state,
             "scoring_output": {

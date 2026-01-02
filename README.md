@@ -9,6 +9,7 @@ This system scrapes business listings from marketplaces like Acquire.com and Fli
 - **Categorize** business data into structured canonical records using deterministic extraction
 - **Score** businesses with multi-dimensional component analysis and weighted total scoring
 - **Generate** targeted follow-up questions only for high-potential businesses (A/B tier, ≥70 score)
+- **Conduct deep sector research** using parallel AI agents for comprehensive market analysis
 - **Track** the entire analysis pipeline with immutable audit trails
 
 The platform uses LangGraph for orchestrating AI agent workflows, PostgreSQL for structured data storage, and Pydantic for schema validation.
@@ -19,15 +20,30 @@ The platform uses LangGraph for orchestrating AI agent workflows, PostgreSQL for
 
 ```
 Marketplace Scraping → Raw Data Storage → Categorization Node → Canonical Records → Scoring Node → Scoring Records → Follow-up Node → Questions
+
+Parallel Deep Research: Sector Analysis → Market Structure + Platform Risk + Monetization + Competition + Exit Analysis → Synthesis → SWOT & Insights
 ```
 
-### LangGraph Workflow
+### LangGraph Workflows
 
-The system implements a deterministic LangGraph workflow with three sequential nodes:
+The system implements multiple deterministic LangGraph workflows:
+
+#### Business Acquisition Workflow (Sequential)
 
 1. **`categorize_listing`**: Extracts structured canonical data from raw HTML/text
 2. **`score_business`**: Evaluates acquisition potential with component scoring
 3. **`generate_follow_up_questions`**: Generates targeted questions (gated by A/B tier + ≥70 score)
+
+#### Deep Research Workflow (Parallel + Synthesis)
+
+1. **`orchestrator`**: Initializes research session and sector key
+2. **Parallel Research Agents**:
+   - **`market_structure`**: Analyzes demand trends, tailwinds, headwinds, small-operator viability
+   - **`platform_risk`**: Identifies dependencies, policy changes, historical failure patterns
+   - **`monetization`**: Analyzes dominant models, strategies, gaps, revenue ceilings
+   - **`competition`**: Assesses intensity, dominant players, differentiation patterns
+   - **`exit`**: Identifies buyer types, multiples, value creation triggers
+3. **`synthesis`**: Combines all research into SWOT analysis, risks, opportunities, sector fit verdict
 
 ### Core Components
 
@@ -58,7 +74,14 @@ The system implements a deterministic LangGraph workflow with three sequential n
 - Generates ≤8 targeted questions tied to specific fields with severity mapping
 - Priorities: critical (IP, financials) → high (churn, dependencies) → medium (operations) → low (details)
 
-#### 5. Monitoring (`agent_execution_logs` table)
+#### 5. Deep Research (`sector_research_records` table)
+
+- **Parallel AI Agents**: 5 specialized research agents analyzing different sector aspects
+- **Append-only Storage**: Versioned research outputs with content hashing for deduplication
+- **Sector Intelligence**: Comprehensive market analysis with SWOT, risks, and opportunities
+- **Synthesis Engine**: Combines parallel research into actionable insights and sector fit verdicts
+
+#### 6. Monitoring (`agent_execution_logs` table)
 
 - Tracks agent performance, success rates, and execution times
 - Enables debugging and optimization of AI workflows
@@ -137,7 +160,7 @@ npm install
 npm run dev
 ```
 
-The UI will be available at `http://localhost:3000` and connects to both the database and the Python backend for real-time pipeline control.
+The UI will be available at `http://localhost:3000` and connects to both the database and the Python backend for real-time pipeline control, including deep research capabilities.
 
 ### Database Schema
 
@@ -147,6 +170,7 @@ The system uses PostgreSQL with the following key tables:
 - `canonical_business_records` - AI-categorized structured business facts
 - `scoring_records` - Acquisition scoring and analysis
 - `follow_up_questions` - Auto-generated seller questions
+- `sector_research_records` - Deep research agent outputs by sector
 - `agent_execution_logs` - AI agent execution tracking
 
 ## Usage
@@ -192,7 +216,9 @@ The web interface provides:
 
 - **Business Pipeline Overview**: View all scraped businesses and their processing status
 - **Manual Workflow Control**: Trigger canonicalization, scoring, and follow-up generation on demand
+- **Deep Research Analysis**: Run comprehensive sector analysis with parallel AI agents
 - **Detailed Business View**: Inspect raw data, canonical records, scoring results, and follow-up questions
+- **Sector Intelligence**: View SWOT analysis, risks, opportunities, and sector fit assessments
 - **Response Management**: Save seller responses to follow-up questions
 
 ### Database Operations
@@ -214,11 +240,23 @@ session = get_session_sync()
 
 ### LangGraph Workflow Integration
 
-The platform implements a deterministic LangGraph workflow with three specialized nodes:
+The platform implements multiple deterministic LangGraph workflows:
+
+#### Business Acquisition Workflow
+
+Three specialized sequential nodes:
 
 1. **`categorize_listing`**: GPT-4o-mini powered extraction into 9 structured domains with content-hash versioning
 2. **`score_business`**: Multi-dimensional scoring (7 components) with weighted total calculation and tier mapping
 3. **`generate_follow_up_questions`**: Targeted question generation with severity-based prioritization (gated execution)
+
+#### Deep Research Workflow
+
+Parallel AI research with synthesis:
+
+1. **`orchestrator`**: Initializes research session with sector key generation
+2. **Parallel Research Agents**: 5 specialized agents analyzing market structure, platform risk, monetization, competition, and exit dynamics
+3. **`synthesis`**: Combines parallel research into SWOT analysis, risk assessment, and sector fit verdicts
 
 ## API Models
 
@@ -280,6 +318,23 @@ The platform implements a deterministic LangGraph workflow with three specialize
 }
 ```
 
+### Deep Research Response
+
+```python
+{
+    "swot": {
+        "strengths": ["Strong recurring revenue model", "Growing market segment"],
+        "weaknesses": ["High customer concentration", "Platform dependency"],
+        "opportunities": ["AI automation potential", "International expansion"],
+        "threats": ["New regulatory requirements", "Increasing competition"]
+    },
+    "non_obvious_risks": ["Hidden switching costs for customers", "Seasonal demand patterns"],
+    "time_sensitive_opportunities": ["Secure key partnership before market saturation"],
+    "sector_fit_verdict": "High",
+    "justification": "Strong growth potential with manageable risks for experienced operators"
+}
+```
+
 ## Development
 
 ### Database Migrations
@@ -306,6 +361,19 @@ python init_db.py --sample
 
 ```
 acquire_agents/
+├── deep_research/              # Deep sector research system
+│   ├── __init__.py
+│   ├── agents/                 # Specialized research agents
+│   │   ├── market_structure.py
+│   │   ├── platform_risk.py
+│   │   ├── monetization.py
+│   │   ├── competition.py
+│   │   └── exit.py
+│   ├── db.py                   # Database persistence utilities
+│   ├── graph.py                # LangGraph workflow orchestration
+│   ├── orchestrator.py         # Research session initialization
+│   ├── state.py                # TypedDict state definitions
+│   └── synthesis.py            # Research synthesis and insights
 ├── models.py                    # SQLModel database models and Pydantic schemas
 ├── database.py                  # Database configuration and utilities
 ├── categorization_workflow.py   # Complete LangGraph acquisition workflow
@@ -314,15 +382,39 @@ acquire_agents/
 ├── schema.sql                  # PostgreSQL schema definition
 ├── requirements.txt             # Python dependencies
 ├── docker-compose.yml           # Docker services
+├── ui_queries/                 # UI data access layer
+│   ├── deal_inbox.ts
+│   ├── deal_overview.ts
+│   ├── sector_intelligence.ts
+│   ├── risk_panel.ts
+│   ├── followups_queue.ts
+│   └── decision_history.ts
 └── langgraph_env/              # Python virtual environment
 ```
 
 ### Key Files
 
+#### Core Acquisition System
+
 - **`categorization_workflow.py`**: Main LangGraph implementation with three nodes
   - `categorize_listing`: GPT-4o-mini powered canonical data extraction
   - `score_business`: Multi-dimensional scoring with weighted calculation
   - `generate_follow_up_questions`: Gated question generation for high-potential businesses
+
+#### Deep Research System
+
+- **`deep_research/graph.py`**: Orchestrates parallel AI research agents
+- **`deep_research/agents/`**: 5 specialized research agents (market_structure, platform_risk, monetization, competition, exit)
+- **`deep_research/synthesis.py`**: Combines parallel research into actionable insights
+- **`deep_research/db.py`**: Database persistence for research outputs
+
+#### UI Data Layer
+
+- **`ui_queries/`**: TypeScript query functions for UI components
+  - `deal_inbox.ts`: Business pipeline queries
+  - `sector_intelligence.ts`: Deep research result queries
+  - `risk_panel.ts`: Risk assessment queries
+  - Other specialized query modules
 
 ## Data Domains & Scoring Components
 
@@ -443,6 +535,81 @@ acquire_agents/
 - **High**: Unknown churn rates, customer concentration, platform dependencies
 - **Medium**: Unclear owner hours, support burden, operational details
 - **Low**: Minor tooling preferences, administrative details
+
+## Deep Research System
+
+The platform includes a comprehensive deep research system that analyzes business sectors using parallel AI agents to provide strategic insights beyond individual business evaluation.
+
+### Research Agent Capabilities
+
+#### Market Structure Agent
+
+- **Demand Analysis**: Growth trends, market size, adoption rates
+- **Headwinds/Tailwinds**: Market forces, regulatory changes, technological shifts
+- **Small Operator Viability**: Entry barriers, scaling challenges, competitive positioning
+
+#### Platform Risk Agent
+
+- **Dependency Mapping**: Platform APIs, infrastructure requirements, vendor lock-in
+- **Policy Analysis**: Historical platform policy changes and their business impact
+- **Failure Pattern Recognition**: Platform outages, API deprecations, service disruptions
+
+#### Monetization Dynamics Agent
+
+- **Revenue Model Analysis**: Dominant monetization strategies in the sector
+- **Strategy Evaluation**: High-performing revenue tactics with documented success
+- **Ceiling Identification**: Revenue scaling constraints and market limitations
+
+#### Competitive Landscape Agent
+
+- **Player Mapping**: Dominant companies, market share distribution, competitive intensity
+- **Success Pattern Analysis**: How independent operators achieve sustainable success
+- **Differentiation Frameworks**: Competitive advantage patterns and market positioning
+
+#### Exit Analysis Agent
+
+- **Buyer Profiling**: Types of acquirers active in the sector and their motivations
+- **Valuation Benchmarks**: Typical exit multiples based on real transaction data
+- **Value Creation Triggers**: Factors that increase enterprise value and attract buyers
+
+#### Synthesis Engine
+
+- **SWOT Generation**: Structured analysis of strengths, weaknesses, opportunities, threats
+- **Risk Synthesis**: Non-obvious risks emerging from cross-domain analysis
+- **Opportunity Prioritization**: Time-sensitive opportunities requiring immediate action
+- **Sector Fit Assessment**: High/Medium/Low attractiveness verdicts for acquisition targeting
+
+### Deep Research Data Model
+
+The `sector_research_records` table stores versioned research outputs with deduplication:
+
+- **Sector-based Storage**: Research results keyed by sector rather than individual business
+- **Agent-specific Outputs**: Each agent stores structured JSON results
+- **Version Control**: Content hashing prevents duplicate research runs
+- **Metadata Tracking**: Model versions, prompt versions, confidence levels, sources
+
+### Integration Points
+
+Deep research integrates with the acquisition pipeline through:
+
+- **UI Triggers**: "Run Deep Research" button on qualified business detail pages
+- **Sector Intelligence**: Research results displayed in dedicated UI panels
+- **Risk Assessment**: Sector threats integrated into deal risk analysis
+- **Decision Support**: SWOT and sector fit verdicts inform acquisition decisions
+
+### Usage Patterns
+
+```python
+# Direct API usage
+from deep_research.graph import run_deep_research
+
+results = run_deep_research("SaaS project management tools sector")
+# Returns: SWOT, risks, opportunities, sector_fit_verdict
+
+# UI integration via API endpoints
+# POST /api/run/deep-research with sector_description
+# Returns comprehensive sector analysis for UI display
+```
 
 ## Contributing
 

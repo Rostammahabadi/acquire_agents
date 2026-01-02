@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { BusinessDetail, FollowUpQuestion } from "@/types";
+import { BusinessDetail, FollowUpQuestion, DeepResearchResults } from "@/types";
 
 export default function BusinessDetailPage() {
   const params = useParams();
@@ -155,6 +155,51 @@ export default function BusinessDetailPage() {
     } catch (err) {
       alert(
         `Error triggering all operations: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`
+      );
+    } finally {
+      setTriggerLoading(null);
+    }
+  };
+
+  const triggerDeepResearch = async () => {
+    if (!business?.canonical_record?.product?.vertical) {
+      alert(
+        "Business needs canonical record with sector information to run deep research."
+      );
+      return;
+    }
+
+    setTriggerLoading("Deep Research");
+    try {
+      const response = await fetch("/api/run/deep-research", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          business_id: businessId,
+          sector_description: `${business.canonical_record.product.vertical} sector business analysis`,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to trigger deep research");
+      }
+
+      const result = await response.json();
+
+      if (result.success) {
+        alert(`Deep research completed successfully!`);
+        // Refresh business data to show updated status
+        await fetchBusinessDetail();
+      } else {
+        alert(`Deep research failed: ${result.message}`);
+      }
+    } catch (err) {
+      alert(
+        `Error triggering deep research: ${
           err instanceof Error ? err.message : "Unknown error"
         }`
       );
@@ -821,6 +866,201 @@ export default function BusinessDetailPage() {
             )}
           </div>
         </div>
+
+        {/* Deep Research Section */}
+        {business.canonical_record && business.scoring_record && (
+          <div className="bg-white shadow rounded-lg">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-medium text-gray-900">
+                  Deep Research
+                </h3>
+                <button
+                  onClick={triggerDeepResearch}
+                  disabled={triggerLoading === "Deep Research"}
+                  className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {triggerLoading === "Deep Research"
+                    ? "Running Deep Research..."
+                    : "Run Deep Research"}
+                </button>
+              </div>
+            </div>
+            <div className="p-6">
+              {business.deep_research_results ? (
+                <div className="space-y-6">
+                  {/* SWOT Analysis */}
+                  {business.deep_research_results.swot && (
+                    <div>
+                      <h4 className="font-medium text-gray-900 mb-3">
+                        SWOT Analysis
+                      </h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <h5 className="text-sm font-medium text-green-700 mb-2">
+                            Strengths
+                          </h5>
+                          <ul className="text-sm text-gray-600 space-y-1">
+                            {business.deep_research_results.swot.strengths?.map(
+                              (strength: string, i: number) => (
+                                <li key={i} className="flex items-start">
+                                  <span className="text-green-500 mr-2">✓</span>
+                                  {strength}
+                                </li>
+                              )
+                            )}
+                          </ul>
+                        </div>
+                        <div>
+                          <h5 className="text-sm font-medium text-blue-700 mb-2">
+                            Opportunities
+                          </h5>
+                          <ul className="text-sm text-gray-600 space-y-1">
+                            {business.deep_research_results.swot.opportunities?.map(
+                              (opportunity: string, i: number) => (
+                                <li key={i} className="flex items-start">
+                                  <span className="text-blue-500 mr-2">○</span>
+                                  {opportunity}
+                                </li>
+                              )
+                            )}
+                          </ul>
+                        </div>
+                        <div>
+                          <h5 className="text-sm font-medium text-red-700 mb-2">
+                            Weaknesses
+                          </h5>
+                          <ul className="text-sm text-gray-600 space-y-1">
+                            {business.deep_research_results.swot.weaknesses?.map(
+                              (weakness: string, i: number) => (
+                                <li key={i} className="flex items-start">
+                                  <span className="text-red-500 mr-2">✗</span>
+                                  {weakness}
+                                </li>
+                              )
+                            )}
+                          </ul>
+                        </div>
+                        <div>
+                          <h5 className="text-sm font-medium text-orange-700 mb-2">
+                            Threats
+                          </h5>
+                          <ul className="text-sm text-gray-600 space-y-1">
+                            {business.deep_research_results.swot.threats?.map(
+                              (threat: string, i: number) => (
+                                <li key={i} className="flex items-start">
+                                  <span className="text-orange-500 mr-2">
+                                    ⚠
+                                  </span>
+                                  {threat}
+                                </li>
+                              )
+                            )}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Non-obvious risks */}
+                  {business.deep_research_results.non_obvious_risks &&
+                    business.deep_research_results.non_obvious_risks.length >
+                      0 && (
+                      <div>
+                        <h4 className="font-medium text-gray-900 mb-3">
+                          Non-obvious Risks
+                        </h4>
+                        <ul className="text-sm text-gray-600 space-y-2">
+                          {business.deep_research_results.non_obvious_risks.map(
+                            (risk: string, i: number) => (
+                              <li key={i} className="flex items-start">
+                                <span className="text-red-500 mr-2 font-bold">
+                                  !
+                                </span>
+                                {risk}
+                              </li>
+                            )
+                          )}
+                        </ul>
+                      </div>
+                    )}
+
+                  {/* Time-sensitive opportunities */}
+                  {business.deep_research_results
+                    .time_sensitive_opportunities &&
+                    business.deep_research_results.time_sensitive_opportunities
+                      .length > 0 && (
+                      <div>
+                        <h4 className="font-medium text-gray-900 mb-3">
+                          Time-sensitive Opportunities
+                        </h4>
+                        <ul className="text-sm text-gray-600 space-y-2">
+                          {business.deep_research_results.time_sensitive_opportunities.map(
+                            (opportunity: string, i: number) => (
+                              <li key={i} className="flex items-start">
+                                <span className="text-blue-500 mr-2">⏰</span>
+                                {opportunity}
+                              </li>
+                            )
+                          )}
+                        </ul>
+                      </div>
+                    )}
+
+                  {/* Sector fit verdict */}
+                  {business.deep_research_results.sector_fit_verdict && (
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="font-medium text-gray-900 mb-2">
+                        Sector Fit Assessment
+                      </h4>
+                      <div
+                        className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                          business.deep_research_results.sector_fit_verdict ===
+                          "High"
+                            ? "bg-green-100 text-green-800"
+                            : business.deep_research_results
+                                .sector_fit_verdict === "Medium"
+                            ? "bg-yellow-100 text-yellow-800"
+                            : "bg-red-100 text-red-800"
+                        }`}
+                      >
+                        {business.deep_research_results.sector_fit_verdict}{" "}
+                        Attractiveness
+                      </div>
+                      {business.deep_research_results.justification && (
+                        <p className="text-sm text-gray-600 mt-2">
+                          {business.deep_research_results.justification}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <div className="text-gray-400 mb-2">
+                    <svg
+                      className="mx-auto h-12 w-12"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1}
+                        d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                      />
+                    </svg>
+                  </div>
+                  <p className="text-gray-500 text-sm">
+                    Run deep research to analyze market structure, competition,
+                    monetization, and more.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
